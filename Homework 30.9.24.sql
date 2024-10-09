@@ -248,4 +248,183 @@ begin
 end;
 $$ ;
 
-SELECT * FROM average_books_per_author()
+SELECT * FROM average_books_per_author();
+
+--13
+drop PROCEDURE update_book;
+
+CREATE OR REPLACE PROCEDURE update_book(target_book_id INTEGER, new_title TEXT, new_release_date DATE, new_price DOUBLE PRECISION, new_author_id INTEGER)
+language plpgsql AS
+    $$
+begin
+    UPDATE books
+    SET title = new_title, release_date = new_release_date, price = new_price, author_id = new_author_id
+    WHERE id = target_book_id;
+end;
+$$ ;
+
+CALL update_book(1,'Under The Dome','2009-11-10',79.9, 6)
+
+--14
+
+drop PROCEDURE update_author;
+
+CREATE OR REPLACE PROCEDURE update_author(target_author_id INTEGER, new_author_name TEXT)
+language plpgsql AS
+    $$
+begin
+    UPDATE authors
+    SET name = new_author_name
+    WHERE id = target_author_id;
+end;
+$$ ;
+
+CALL update_author(1,'Yuval Noah Harari');
+
+--15
+
+drop function books_between_min_and_max_price;
+
+CREATE OR REPLACE FUNCTION books_between_min_and_max_price(min_price DOUBLE PRECISION, max_price DOUBLE PRECISION)
+RETURNS TABLE (book_id BIGINT, book_title TEXT, book_price DOUBLE PRECISION)
+language plpgsql AS
+    $$
+begin
+    RETURN QUERY
+        SELECT id, title, price FROM books
+            WHERE price BETWEEN min_price AND max_price;
+end;
+$$ ;
+
+SELECT * FROM books_between_min_and_max_price(39.9,59.9);
+
+--16
+drop function books_not_by_authors;
+
+CREATE OR REPLACE FUNCTION books_not_by_authors(author1 TEXT, author2 TEXT)
+RETURNS TABLE (book_id BIGINT, book_title TEXT, author TEXT)
+LANGUAGE plpgsql AS
+$$
+begin
+    RETURN QUERY
+    WITH BOOKS_AUTH1 AS
+        (SELECT b.id
+         FROM books b
+        JOIN authors a
+        ON b.author_id = a.id
+        WHERE a.name = author1),
+    BOOKS_AUTH2 AS
+        (SELECT b.id
+         FROM books b
+        JOIN authors a
+        ON b.author_id = a.id
+        WHERE a.name = author2)
+    SELECT b.id, b.title, a.name
+    FROM books b
+    JOIN authors a
+    ON b.author_id = a.id
+    WHERE b.id NOT IN (SELECT id FROM BOOKS_AUTH1)
+      AND b.id NOT IN (SELECT id FROM BOOKS_AUTH2);
+END;
+$$;
+
+SELECT * FROM books_not_by_authors('Stephen King', 'Haruki Murakami');
+
+--17
+drop function upsert_new_book;
+
+ALTER TABLE books
+ADD CONSTRAINT book_unique_title_author UNIQUE (title, author_id);
+
+CREATE OR REPLACE function upsert_new_book(book_title TEXT, book_release_date DATE, book_author_id BIGINT, book_price NUMERIC)
+RETURNS BIGINT
+language plpgsql AS
+    $$
+    DECLARE
+        book_id BIGINT;
+    begin
+        INSERT INTO books (title,release_date,author_id,price)
+        VALUES (book_title,book_release_date, book_author_id, book_price)
+        ON CONFLICT (title, author_id) DO UPDATE
+        SET release_date = EXCLUDED.release_date
+        RETURNING id INTO book_id;
+
+        RETURN book_id;
+    end;
+$$;
+
+SELECT upsert_new_book('A Game of Thrones', '1996-08-06',11,999.99);
+
+select * from books where title = 'A Game of Thrones';
+
+--18
+drop function books_details_with_text_parameter;
+
+CREATE OR REPLACE FUNCTION books_details_with_text_parameter (parameter TEXT)
+RETURNS TABLE (book_id BIGINT, book_title TEXT, date_or_author TEXT)
+language plpgsql AS
+    $$
+    begin
+        IF parameter = 'D' THEN
+            RETURN QUERY
+                SELECT b.id, b.title, b.release_date::TEXT
+                FROM books b;
+        ELSE
+            RETURN QUERY
+                SELECT b.id, b.title, a.name
+                FROM books b
+                JOIN authors a
+                ON b.author_id=a.id;
+        END IF;
+    end;
+$$;
+
+SELECT * FROM books_details_with_text_parameter ('D');
+SELECT * FROM books_details_with_text_parameter ('d');
+SELECT * FROM books_details_with_text_parameter ('So postreSQL IS case-sensitive??');
+
+--19
+drop function with_or_without_discount;
+
+CREATE OR REPLACE FUNCTION with_or_without_discount(
+    discount BOOLEAN,
+    book_title TEXT,
+    discount_percentage DOUBLE PRECISION DEFAULT 0.0
+)
+RETURNS TABLE (
+    the_books_title TEXT,
+    original_price DOUBLE PRECISION,
+    with_discount TEXT,
+    applied_discount_percentage DOUBLE PRECISION,
+    new_price DOUBLE PRECISION
+)
+LANGUAGE plpgsql AS
+$$
+DECLARE
+    original_price DOUBLE PRECISION;
+    new_price DOUBLE PRECISION;
+    book_exists BOOLEAN;
+begin
+    SELECT EXISTS(SELECT 1 FROM books WHERE title = book_title) INTO book_exists;
+    IF NOT book_exists THEN
+        RAISE EXCEPTION 'This book does not exist';
+    END IF;
+    SELECT price INTO original_price FROM books WHERE title = book_title;
+    IF discount THEN
+        IF discount_percentage = 0.0 THEN
+            discount_percentage := 0.5;
+        END IF;
+        new_price := ROUND((original_price - (original_price * discount_percentage))::NUMERIC, 2);
+        RETURN QUERY
+            SELECT book_title AS the_books_title, original_price, 'Yes' AS with_discount, discount_percentage AS applied_discount_percentage, new_price;
+    ELSE
+        RETURN QUERY
+            SELECT book_title AS the_books_title, original_price, 'No' AS with_discount, 0::DOUBLE PRECISION AS applied_discount_percentage, original_price AS new_price;
+    END IF;
+end;
+$$;
+
+SELECT * FROM with_or_without_discount(TRUE, 'Harry Potter and the Prisoner of Azkaban', 0.5);
+SELECT * FROM with_or_without_discount(FALSE, 'Harry Potter and the Prisoner of Azkaban', 0.1);
+SELECT * FROM with_or_without_discount(TRUE, 'Harry Potter and the Prisoner of Azkaban');
+SELECT * FROM with_or_without_discount(FALSE, 'Harry Potter and the Prisoner of Azkaban');
