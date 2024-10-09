@@ -428,3 +428,34 @@ SELECT * FROM with_or_without_discount(TRUE, 'Harry Potter and the Prisoner of A
 SELECT * FROM with_or_without_discount(FALSE, 'Harry Potter and the Prisoner of Azkaban', 0.1);
 SELECT * FROM with_or_without_discount(TRUE, 'Harry Potter and the Prisoner of Azkaban');
 SELECT * FROM with_or_without_discount(FALSE, 'Harry Potter and the Prisoner of Azkaban');
+
+--20
+
+drop function book_id_by_title;
+
+CREATE OR REPLACE FUNCTION book_id_by_title(search_title TEXT)
+RETURNS INTEGER
+language plpgsql AS $$
+DECLARE
+    max_id INTEGER;
+    book_id INTEGER := 1;
+    found_id INTEGER := 0;
+    book_title TEXT;
+begin
+    SELECT MAX(id) INTO max_id FROM books;
+    WHILE book_id <= max_id
+    LOOP
+        SELECT title INTO book_title
+        FROM books
+        WHERE id = book_id;
+        IF book_title = search_title THEN
+            found_id := book_id;
+            EXIT;
+        END IF;
+        book_id := book_id + 1;
+    END LOOP;
+    RETURN found_id;
+end;
+$$
+
+SELECT * FROM book_id_by_title('The ABC Murders');
